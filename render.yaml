@@ -4,8 +4,8 @@ services:
     runtime: python
     plan: free
     region: ohio
-    buildCommand: ""
-    startCommand: bash -c "apt-get update -qq && apt-get install -y -qq ffmpeg && uvicorn app:app --host 0.0.0.0 --port $PORT"
+    buildCommand: pip install -r webapp/requirements.txt
+    startCommand: bash -c "apt-get update -qq && apt-get install -y -qq ffmpeg && cd webapp && uvicorn app:app --host 0.0.0.0 --port $PORT"
     envVars:
       - key: VIDEO_API_KEY
         sync: false
