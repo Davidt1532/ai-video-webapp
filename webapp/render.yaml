@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: ai-story-video
+    runtime: python
+    plan: free
+    region: ohio
+    buildCommand: ""
+    startCommand: bash -c "apt-get update -qq && apt-get install -y -qq ffmpeg && uvicorn app:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: VIDEO_API_KEY
+        sync: false
+      - key: PYTHONUNBUFFERED
+        value: "1"

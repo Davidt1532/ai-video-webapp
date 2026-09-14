@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>History · AI Story Video Generator</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">🎬 <span>AI Story Video</span></div>
+    <nav>
+      <a href="/">Generator</a>
+      <a href="/history" class="active">History</a>
+    </nav>
+  </header>
+
+  <main class="container">
+    <h1>Job history</h1>
+    <p class="subtitle">Your past generations. Click ▶ to preview, <b>↻</b> to re-run, <b>✕</b> to delete.</p>
+
+    <table id="history-table" class="history-table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Mode</th>
+          <th>Prompt / Story</th>
+          <th>Status</th>
+          <th>Scenes</th>
+          <th>Created</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <p id="history-empty" class="hint hidden">No jobs yet. Go to the <a href="/">generator</a> to make your first video.</p>
+  </main>
+
+  <div id="player-modal" class="modal hidden">
+    <div class="modal-box">
+      <button id="modal-close" class="modal-close" type="button">&times;</button>
+      <h3 id="modal-title">Preview</h3>
+      <video id="modal-video" controls playsinline></video>
+      <a id="modal-download" class="btn-primary" href="#" download>Download</a>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
