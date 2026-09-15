@@ -8,6 +8,10 @@ from config import (
 )
 
 
+class DailyQuotaExceeded(Exception):
+    """Raised when the provider reports the free daily generation quota is used up."""
+
+
 def ensure_dirs():
     os.makedirs(CLIPS_DIR, exist_ok=True)
 
@@ -75,6 +79,16 @@ def generate_video(prompt: str, scene_number: int, output_dir: str = None,
                 payload.pop("image_url", None)
                 used_image = False
                 continue
+            if status_code == 429:
+                detail = ""
+                if e.response is not None:
+                    try:
+                        detail = (e.response.json() or {}).get("detail", "") or ""
+                    except Exception:
+                        pass
+                if "daily limit" in detail.lower():
+                    # Free tier caps generations/day: fail fast with the real reason.
+                    raise DailyQuotaExceeded(detail or "Free daily video quota reached.")
             print(f"  [error] Request failed: {e}")
             if status_code == 429:
                 wait = 60 * (attempt + 1)
