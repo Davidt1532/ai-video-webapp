@@ -13,8 +13,12 @@ Usage:
     key_pool.mark_exhausted(key)     # forced exhaustion (provider 429)
     any_key = key_pool.any_key()     # first key (chat calls, not video)
 
+Keys come from VIDEO_API_KEYS (comma-separated), or VIDEO_API_KEY_1..N
+(one key per env var), falling back to a single VIDEO_API_KEY.
+
 Thread-safe; pools are small so a simple lock suffices.
 """
+import os
 import threading
 from datetime import datetime, timedelta
 
@@ -22,15 +26,31 @@ from config import (
     VIDEO_API_KEY, VIDEO_API_KEYS, FREE_DAILY_VIDEO_LIMIT, QUOTA_OFFSET_HOURS,
 )
 
+MAX_NUMBERED_KEYS = 20
+
 
 def _parse_keys() -> list[str]:
-    """Load keys from VIDEO_API_KEYS (comma-separated), falling back to VIDEO_API_KEY."""
+    """Load keys, in priority order:
+      1. VIDEO_API_KEYS   (comma-separated), e.g. "k1,k2,k3"
+      2. VIDEO_API_KEY_1..MAX_NUMBERED_KEYS (one key per env var)
+      3. VIDEO_API_KEY    (single-key fallback)
+    """
     keys = []
     if VIDEO_API_KEYS:
         keys = [k.strip() for k in VIDEO_API_KEYS.split(",") if k.strip()]
+    if not keys:
+        for i in range(1, MAX_NUMBERED_KEYS + 1):
+            k = os.getenv(f"VIDEO_API_KEY_{i}", "").strip()
+            if k:
+                keys.append(k)
     if not keys and VIDEO_API_KEY:
         keys = [VIDEO_API_KEY.strip()]
-    return keys
+    seen, unique = set(), []
+    for k in keys:
+        if k not in seen:
+            seen.add(k)
+            unique.append(k)
+    return unique
 
 
 class KeyPool:
@@ -63,18 +83,29 @@ class KeyPool:
         return [k for k in self._keys if self._used[k] < self._limit and not self._exhausted[k]]
 
     # ---------- public API ----------
-    def get_video_key(self) -> str:
-        """Return the next usable key for video generation, or None if all are spent."""
+    def get_video_key(self, exclude: set = None) -> str:
+        """Return the next usable key, skipping any in `exclude`.
+
+        Returns None when no usable key remains (all spent or all excluded).
+        """
         with self._lock:
             avail = self._available()
-            if not avail:
+            excluded = exclude or set()
+            remaining = [k for k in avail if k not in excluded]
+            if not remaining:
                 return None
             for _ in range(len(self._keys)):
                 key = self._keys[self._cursor % len(self._keys)]
                 self._cursor += 1
-                if key in avail:
+                if key in remaining:
                     return key
-            return avail[0]
+            return remaining[0]
+
+    def any_available(self) -> bool:
+        """True if any key still has free video quota today (used by the caller
+        to distinguish transient failures from true daily exhaustion)."""
+        with self._lock:
+            return bool(self._available())
 
     def mark_submitted(self, key: str):
         """Record one video generation submission against a key's daily quota."""

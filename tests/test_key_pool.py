@@ -49,6 +49,25 @@ class TestParseKeys(unittest.TestCase):
              patch.object(key_pool_mod, "VIDEO_API_KEY", ""):
             self.assertEqual(key_pool_mod._parse_keys(), [])
 
+    def test_numbered_env_vars(self):
+        with patch.object(key_pool_mod, "VIDEO_API_KEYS", ""), \
+             patch.object(key_pool_mod, "VIDEO_API_KEY", ""), \
+             patch.dict(os.environ, {"VIDEO_API_KEY_1": "n1", "VIDEO_API_KEY_2": " n2 ",
+                                     "VIDEO_API_KEY_3": "n3"}):
+            self.assertEqual(key_pool_mod._parse_keys(), ["n1", "n2", "n3"])
+
+    def test_numbered_ignored_when_comma_present(self):
+        with patch.object(key_pool_mod, "VIDEO_API_KEYS", "k1,k2"), \
+             patch.object(key_pool_mod, "VIDEO_API_KEY", ""), \
+             patch.dict(os.environ, {"VIDEO_API_KEY_1": "should-not-be-used"}):
+            self.assertEqual(key_pool_mod._parse_keys(), ["k1", "k2"])
+
+    def test_dedupes(self):
+        with patch.object(key_pool_mod, "VIDEO_API_KEYS", ""), \
+             patch.object(key_pool_mod, "VIDEO_API_KEY", ""), \
+             patch.dict(os.environ, {"VIDEO_API_KEY_1": "same", "VIDEO_API_KEY_2": "same"}):
+            self.assertEqual(key_pool_mod._parse_keys(), ["same"])
+
 
 class TestKeyPool(unittest.TestCase):
     def setUp(self):
@@ -91,6 +110,17 @@ class TestKeyPool(unittest.TestCase):
         self.assertEqual(self.pool._used, {"kA": 0, "kB": 0})
         self.assertEqual(self.pool._exhausted, {"kA": False, "kB": False})
         self.assertEqual(self.pool.get_video_key(), "kA")
+
+    def test_any_available(self):
+        pool = KeyPool(["kA"], daily_limit=1)
+        self.assertTrue(pool.any_available())
+        pool.mark_submitted("kA")
+        self.assertFalse(pool.any_available())
+
+    def test_get_video_key_exclude(self):
+        pool = KeyPool(["kA", "kB"], daily_limit=2)
+        self.assertEqual(pool.get_video_key(exclude={"kA"}), "kB")
+        self.assertIsNone(pool.get_video_key(exclude={"kA", "kB"}))
 
     def test_all_exhausted_message(self):
         msg = self.pool.all_exhausted_message()
@@ -143,6 +173,60 @@ class TestRotationInGenerateVideo(unittest.TestCase):
         # Winning key must be used for polling and counted against quota.
         self.assertEqual(pool.status()[1]["used"], 1)
         self.assertTrue(pool.status()[0]["exhausted"])
+
+    def test_auto_switch_on_transient_error(self):
+        """A non-daily-limit failure must also rotate to the next key."""
+        import video_generator
+        pool = KeyPool(["kA", "kB"], daily_limit=2)
+        video_generator.key_pool = pool
+
+        post_headers = []
+
+        def fake_post(url, headers=None, json=None, timeout=None, **kw):
+            post_headers.append(headers)
+            key = headers["Authorization"].split()[-1]
+            if key == "kA":
+                return _FakeResp(429, {"detail": "rate limit exceeded"})
+            return _FakeResp(200, {"id": "task-t"})
+
+        def fake_get(url, headers=None, params=None, timeout=None, **kw):
+            return _FakeResp(200, {"task_status": "succeeded",
+                                   "video_result": [{"url": "http://cdn/y.mp4"}]})
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(video_generator.requests, "post", side_effect=fake_post), \
+             patch.object(video_generator.requests, "get", side_effect=fake_get), \
+             patch.object(video_generator, "download_video", side_effect=lambda u, p: p):
+            path = video_generator.generate_video("Test", 1, output_dir=tmp)
+
+        self.assertTrue(path.endswith(os.path.join("clips", "scene_01.mp4")))
+        self.assertEqual(len(post_headers), 2)
+        self.assertEqual(post_headers[0]["Authorization"], "Bearer kA")
+        self.assertEqual(post_headers[1]["Authorization"], "Bearer kB")
+        self.assertEqual(pool.status()[1]["used"], 1)
+        self.assertFalse(pool.status()[0]["exhausted"])  # transient, not daily-limit
+
+    def test_all_transient_gives_up_after_rounds(self):
+        """If every key fails transiently every round, give up after MAX_RETRIES rounds."""
+        import video_generator
+        pool = KeyPool(["kA", "kB"], daily_limit=2)
+        video_generator.key_pool = pool
+
+        calls = {"post": 0}
+
+        def fake_post(url, headers=None, json=None, timeout=None, **kw):
+            calls["post"] += 1
+            return _FakeResp(429, {"detail": "slow down"})
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(video_generator, "MAX_RETRIES", 3), \
+             patch.object(video_generator.requests, "post", side_effect=fake_post), \
+             patch.object(video_generator.time, "sleep", lambda s: None):
+            path = video_generator.generate_video("Test", 1, output_dir=tmp)
+
+        self.assertEqual(path, "")
+        # 2 keys x 3 full rounds
+        self.assertEqual(calls["post"], 6)
 
     def test_all_exhausted_raises(self):
         import video_generator

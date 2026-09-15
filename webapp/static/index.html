@@ -32,6 +32,18 @@
         <div class="hint">One prompt → one short AI video clip.</div>
       </div>
 
+      <!-- Character reference (shared by both modes) -->
+      <div class="ref-block">
+        <label for="ref-file">Character reference (optional)</label>
+        <div class="ref-drop" id="ref-drop" title="Upload your character image">
+          <input type="file" id="ref-file" accept="image/png,image/jpeg,image/webp" hidden />
+          <img id="ref-preview" class="hidden" alt="Character preview" />
+          <span id="ref-placeholder">🪄 Click to upload your character image</span>
+          <button id="ref-remove" class="btn-secondary ref-remove hidden" type="button">Remove</button>
+        </div>
+        <div class="hint">Used as the first frame on the free model. If the API rejects it, the video generates without it.</div>
+      </div>
+
       <!-- Full story mode -->
       <div id="panel-story" class="panel hidden">
         <div class="upload-row">
@@ -42,17 +54,6 @@
         <label for="story-text">Your story</label>
         <textarea id="story-text" rows="8" placeholder="Scene 1: Title&#10;Narration for scene one...&#10;&#10;Scene 2: Title&#10;Narration for scene two..."></textarea>
         <div class="hint">Use "Scene N: Title" markers (or blank-line separators) — each scene gets its own clip + voiceover.</div>
-
-        <div class="ref-block">
-          <label for="ref-file">Character reference (optional)</label>
-          <div class="ref-drop" id="ref-drop" title="Upload your character image">
-            <input type="file" id="ref-file" accept="image/png,image/jpeg,image/webp" hidden />
-            <img id="ref-preview" class="hidden" alt="Character preview" />
-            <span id="ref-placeholder">🪄 Click to upload your character image</span>
-            <button id="ref-remove" class="btn-secondary ref-remove hidden" type="button">Remove</button>
-          </div>
-          <div class="hint">Used as the first frame for every scene on the free model. If the API rejects it, scenes generate automatically without it.</div>
-        </div>
 
         <div class="field voice-instructions-field">
           <label for="voice-instructions">Voiceover instructions (optional)</label>

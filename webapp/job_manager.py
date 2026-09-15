@@ -202,7 +202,11 @@ class JobManager:
         if mode == "clip":
             prompt = job["prompt"] or "An empty scene, cinematic."
             self._update(job_id, scenes_total=1, current_scene="Generating clip")
-            clip = generate_video(prompt, 1, output_dir=job_dir)
+            ref = job.get("ref_image", "")
+            image_url = None
+            if ref and PUBLIC_BASE_URL:
+                image_url = f"{PUBLIC_BASE_URL.rstrip('/')}/api/refs/{ref}"
+            clip = generate_video(prompt, 1, output_dir=job_dir, image_url=image_url)
             if not clip:
                 raise RuntimeError("Video generation failed - check API key or retry later (rate limits).")
             # Optional: nothing to stitch for a single clip

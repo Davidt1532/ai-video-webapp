@@ -57,7 +57,8 @@ def generate_video(prompt: str, scene_number: int, output_dir: str = None,
     if image_url:
         payload["image_url"] = [image_url]
 
-    # Submit job, rotating API keys when one hits its free daily quota.
+    # Submit job, rotating API keys. Any failure moves to the next key; only
+    # when ALL keys are truly spent for today do we raise DailyQuotaExceeded.
     task_id = None
     task_key = None
     used_image = bool(image_url)
@@ -66,7 +67,8 @@ def generate_video(prompt: str, scene_number: int, output_dir: str = None,
     if key is None:
         raise DailyQuotaExceeded(key_pool.all_exhausted_message())
 
-    attempt = 0
+    failed = set()
+    round_num = 0
     while True:
         try:
             print(f"  [submit] Sending video generation request (key {key[:8]}...)...")
@@ -88,9 +90,7 @@ def generate_video(prompt: str, scene_number: int, output_dir: str = None,
                 break
             else:
                 print(f"  [warn] No task ID in response: {data}")
-                key = key_pool.get_video_key()
-                if key is None:
-                    raise DailyQuotaExceeded(key_pool.all_exhausted_message())
+                failed.add(key)
         except requests.exceptions.HTTPError as e:
             status_code = e.response.status_code if e.response is not None else 0
             if used_image and status_code in (400, 422):
@@ -104,29 +104,37 @@ def generate_video(prompt: str, scene_number: int, output_dir: str = None,
                 if "daily limit" in detail.lower():
                     # Free tier caps generations/day/key: retire this key for today.
                     key_pool.mark_exhausted(key)
-                    key = key_pool.get_video_key()
-                    if key is None:
-                        raise DailyQuotaExceeded(key_pool.all_exhausted_message())
                     print(f"  [warn] Key reached daily limit; switching keys")
-                    continue
-            print(f"  [error] Request failed: {e}")
-            attempt += 1
-            if attempt >= MAX_RETRIES:
-                print(f"  [error] Could not submit video job after {MAX_RETRIES} attempts")
-                return ""
-            if status_code == 429:
-                wait = 60 * attempt
-                print(f"  [wait] Rate limited. Waiting {wait}s before retry...")
-                time.sleep(wait)
+                else:
+                    print(f"  [warn] Key rate-limited ({status_code}); switching keys")
+                    failed.add(key)
             else:
-                time.sleep(POLL_INTERVAL * 2)
+                print(f"  [error] Key failed ({status_code}): {e}; switching keys")
+                failed.add(key)
         except requests.RequestException as e:
-            print(f"  [error] Request failed: {e}")
-            attempt += 1
-            if attempt >= MAX_RETRIES:
-                print(f"  [error] Could not submit video job after {MAX_RETRIES} attempts")
+            print(f"  [error] Key failed (network): {e}; switching keys")
+            failed.add(key)
+
+        # Rotate to the next fresh key for this pass.
+        key = key_pool.get_video_key(exclude=failed)
+        if key is not None:
+            continue
+        if key_pool.any_available():
+            # Some keys still have quota but all failed transiently this pass:
+            # back off, clear the failure set, and try the whole pool again.
+            round_num += 1
+            if round_num >= MAX_RETRIES:
+                print(f"  [error] Could not submit video job after {MAX_RETRIES} rounds")
                 return ""
-            time.sleep(POLL_INTERVAL * 2)
+            wait = POLL_INTERVAL * 2 * round_num
+            print(f"  [wait] All keys rejected this pass. Backing off {wait}s, round {round_num + 1}/{MAX_RETRIES}")
+            time.sleep(wait)
+            failed.clear()
+            key = key_pool.get_video_key()
+            if key is None:
+                raise DailyQuotaExceeded(key_pool.all_exhausted_message())
+        else:
+            raise DailyQuotaExceeded(key_pool.all_exhausted_message())
 
     if not task_key:
         return ""

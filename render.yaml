@@ -11,6 +11,26 @@ services:
         sync: false
       - key: VIDEO_API_KEYS
         sync: false
+      - key: VIDEO_API_KEY_1
+        sync: false
+      - key: VIDEO_API_KEY_2
+        sync: false
+      - key: VIDEO_API_KEY_3
+        sync: false
+      - key: VIDEO_API_KEY_4
+        sync: false
+      - key: VIDEO_API_KEY_5
+        sync: false
+      - key: VIDEO_API_KEY_6
+        sync: false
+      - key: VIDEO_API_KEY_7
+        sync: false
+      - key: VIDEO_API_KEY_8
+        sync: false
+      - key: VIDEO_API_KEY_9
+        sync: false
+      - key: VIDEO_API_KEY_10
+        sync: false
       - key: PUBLIC_BASE_URL
         value: https://ai-video-webapp-3.onrender.com
       - key: PYTHONUNBUFFERED
