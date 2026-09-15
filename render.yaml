@@ -9,6 +9,8 @@ services:
     envVars:
       - key: VIDEO_API_KEY
         sync: false
+      - key: VIDEO_API_KEYS
+        sync: false
       - key: PUBLIC_BASE_URL
         value: https://ai-video-webapp-3.onrender.com
       - key: PYTHONUNBUFFERED

@@ -12,20 +12,22 @@ import re
 import requests
 
 from config import (
-    VIDEO_API_KEY, VIDEO_API_BASE_URL, NARRATION_MODEL,
+    VIDEO_API_BASE_URL, NARRATION_MODEL,
     NARRATION_TIMEOUT, NARRATION_MAX_TEXT, TTS_VOICE, CURATED_VOICES,
 )
+from key_pool import key_pool
 
 
 def _chat(messages: list[dict], max_tokens: int = 300) -> str:
     """Call the free NovAI chat model. Returns response text or "" on failure."""
-    if not VIDEO_API_KEY:
+    key = key_pool.any_key()
+    if not key:
         return ""
     try:
         resp = requests.post(
             f"{VIDEO_API_BASE_URL}/chat/completions",
             headers={
-                "Authorization": f"Bearer {VIDEO_API_KEY}",
+                "Authorization": f"Bearer {key}",
                 "Content-Type": "application/json",
             },
             json={

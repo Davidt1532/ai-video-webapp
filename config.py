@@ -2,9 +2,17 @@ import os
 
 # Video API settings (NovAI - truly free cogvideox-flash, $0/generation)
 # Get free key at: https://aiapi-pro.com
-# NOTE: key must be set via VIDEO_API_KEY env var (never hardcode/commit it)
+# NOTE: keys must be set via env vars (never hardcode/commit them)
+#   VIDEO_API_KEYS   = comma-separated NovAI keys, rotated automatically when a
+#                      key hits its free daily generation limit (e.g. "k1,k2,k3")
+#   VIDEO_API_KEY    = single key (fallback for older setups)
 VIDEO_API_KEY = os.getenv("VIDEO_API_KEY", "")
+VIDEO_API_KEYS = os.getenv("VIDEO_API_KEYS", "")
 VIDEO_API_BASE_URL = "https://aiapi-pro.com/v1"
+
+# Free tier video generation quota (per key, resets at midnight UTC+8)
+FREE_DAILY_VIDEO_LIMIT = 5
+QUOTA_OFFSET_HOURS = 8  # UTC offset of the reset timezone
 
 # Public base URL of this app - used to build absolute URLs for uploaded
 # reference images so the video API can fetch them from the internet.

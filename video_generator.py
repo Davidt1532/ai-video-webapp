@@ -2,18 +2,28 @@ import os
 import time
 import requests
 from config import (
-    VIDEO_API_KEY, VIDEO_API_BASE_URL, VIDEO_MODEL,
+    VIDEO_API_BASE_URL, VIDEO_MODEL,
     VIDEO_DURATION, ASPECT_RATIO, MAX_RETRIES,
     POLL_INTERVAL, MAX_POLL_TIME, CLIPS_DIR,
 )
+from key_pool import key_pool
 
 
 class DailyQuotaExceeded(Exception):
-    """Raised when the provider reports the free daily generation quota is used up."""
+    """Raised when every API key has used up its free daily generation quota."""
 
 
 def ensure_dirs():
     os.makedirs(CLIPS_DIR, exist_ok=True)
+
+
+def _detail(e) -> str:
+    if e.response is None:
+        return ""
+    try:
+        return (e.response.json() or {}).get("detail", "") or ""
+    except Exception:
+        return ""
 
 
 def generate_video(prompt: str, scene_number: int, output_dir: str = None,
@@ -34,10 +44,11 @@ def generate_video(prompt: str, scene_number: int, output_dir: str = None,
         print(f"  [skip] Clip already exists: {output_path}")
         return output_path
 
-    headers = {
-        "Authorization": f"Bearer {VIDEO_API_KEY}",
-        "Content-Type": "application/json",
-    }
+    def _headers(key: str) -> dict:
+        return {
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        }
 
     payload = {
         "model": VIDEO_MODEL,
@@ -46,31 +57,40 @@ def generate_video(prompt: str, scene_number: int, output_dir: str = None,
     if image_url:
         payload["image_url"] = [image_url]
 
-    def submit():
-        print(f"  [submit] Sending video generation request...")
-        if image_url:
-            print(f"  [submit]   first-frame image: {image_url[:80]}")
-        resp = requests.post(
-            f"{VIDEO_API_BASE_URL}/video/generations",
-            headers=headers,
-            json=payload,
-            timeout=60,
-        )
-        resp.raise_for_status()
-        return resp.json()
-
-    # Submit job
+    # Submit job, rotating API keys when one hits its free daily quota.
     task_id = None
+    task_key = None
     used_image = bool(image_url)
-    for attempt in range(MAX_RETRIES):
+
+    key = key_pool.get_video_key()
+    if key is None:
+        raise DailyQuotaExceeded(key_pool.all_exhausted_message())
+
+    attempt = 0
+    while True:
         try:
-            data = submit()
+            print(f"  [submit] Sending video generation request (key {key[:8]}...)...")
+            if image_url:
+                print(f"  [submit]   first-frame image: {image_url[:80]}")
+            resp = requests.post(
+                f"{VIDEO_API_BASE_URL}/video/generations",
+                headers=_headers(key),
+                json=payload,
+                timeout=60,
+            )
+            resp.raise_for_status()
+            data = resp.json()
             task_id = data.get("id") or data.get("task_id")
             if task_id:
-                print(f"  [submit] Task ID: {task_id}")
+                key_pool.mark_submitted(key)
+                task_key = key
+                print(f"  [submit] Task ID: {task_id} (key {key[:8]}...)")
                 break
             else:
                 print(f"  [warn] No task ID in response: {data}")
+                key = key_pool.get_video_key()
+                if key is None:
+                    raise DailyQuotaExceeded(key_pool.all_exhausted_message())
         except requests.exceptions.HTTPError as e:
             status_code = e.response.status_code if e.response is not None else 0
             if used_image and status_code in (400, 422):
@@ -80,32 +100,40 @@ def generate_video(prompt: str, scene_number: int, output_dir: str = None,
                 used_image = False
                 continue
             if status_code == 429:
-                detail = ""
-                if e.response is not None:
-                    try:
-                        detail = (e.response.json() or {}).get("detail", "") or ""
-                    except Exception:
-                        pass
+                detail = _detail(e)
                 if "daily limit" in detail.lower():
-                    # Free tier caps generations/day: fail fast with the real reason.
-                    raise DailyQuotaExceeded(detail or "Free daily video quota reached.")
+                    # Free tier caps generations/day/key: retire this key for today.
+                    key_pool.mark_exhausted(key)
+                    key = key_pool.get_video_key()
+                    if key is None:
+                        raise DailyQuotaExceeded(key_pool.all_exhausted_message())
+                    print(f"  [warn] Key reached daily limit; switching keys")
+                    continue
             print(f"  [error] Request failed: {e}")
+            attempt += 1
+            if attempt >= MAX_RETRIES:
+                print(f"  [error] Could not submit video job after {MAX_RETRIES} attempts")
+                return ""
             if status_code == 429:
-                wait = 60 * (attempt + 1)
+                wait = 60 * attempt
                 print(f"  [wait] Rate limited. Waiting {wait}s before retry...")
                 time.sleep(wait)
-            elif attempt < MAX_RETRIES - 1:
+            else:
                 time.sleep(POLL_INTERVAL * 2)
         except requests.RequestException as e:
             print(f"  [error] Request failed: {e}")
-            if attempt < MAX_RETRIES - 1:
-                time.sleep(POLL_INTERVAL * 2)
+            attempt += 1
+            if attempt >= MAX_RETRIES:
+                print(f"  [error] Could not submit video job after {MAX_RETRIES} attempts")
+                return ""
+            time.sleep(POLL_INTERVAL * 2)
 
-    if not task_id:
-        print(f"  [error] Could not submit video job after {MAX_RETRIES} attempts")
+    if not task_key:
         return ""
 
     # Poll for completion (try /video/generations/{id}, fall back to /video/tasks/{id})
+    # NOTE: must poll with the same key that created the task.
+    headers = _headers(task_key)
     start_time = time.time()
     poll_paths = [
         f"{VIDEO_API_BASE_URL}/video/generations/{task_id}",

@@ -8,7 +8,8 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 if sys.stderr.encoding and sys.stderr.encoding.lower() != "utf-8":
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-from config import VIDEO_API_KEY, FINAL_OUTPUT
+from config import FINAL_OUTPUT
+from key_pool import key_pool
 from scene_splitter import load_story
 from video_generator import generate_all_clips
 from voiceover_generator import generate_all_voiceovers
@@ -25,8 +26,8 @@ def check_ffmpeg():
 
 
 def check_api_key():
-    """Check if API key is configured."""
-    if VIDEO_API_KEY == "YOUR_NOVAI_KEY_HERE" or not VIDEO_API_KEY:
+    """Check if at least one API key is configured."""
+    if key_pool.any_key() == "YOUR_NOVAI_KEY_HERE" or not key_pool.any_key():
         return False
     return True
 
@@ -64,7 +65,7 @@ def main():
     if not check_api_key():
         print("❌ NovAI API key not configured!")
         print("   1. Get free key (no card) at: https://aiapi-pro.com")
-        print("   2. Set it in config.py or as env var VIDEO_API_KEY")
+        print("   2. Set it as env var VIDEO_API_KEYS (comma-separated) or VIDEO_API_KEY")
         sys.exit(1)
 
     # Get story file path
