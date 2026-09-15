@@ -1,19 +1,24 @@
 import os
 import asyncio
+import uuid
+import mimetypes
 from pathlib import Path
 
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env", override=False)
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from job_manager import JobManager
+from config import CURATED_VOICES, TTS_VOICE
 
 BASE_DIR = Path(__file__).parent
 STATIC_DIR = BASE_DIR / "static"
 DATA_DIR = os.getenv("DATA_DIR", str(BASE_DIR / "data"))
+REFS_DIR = os.path.join(DATA_DIR, "refs")
+os.makedirs(REFS_DIR, exist_ok=True)
 
 app = FastAPI(title="AI Story Video Generator")
 manager = JobManager(data_dir=DATA_DIR)
@@ -33,21 +38,52 @@ async def history_page():
 
 @app.get("/api/voices")
 async def list_voices():
-    import edge_tts
+    """Return only the curated human-tune voices (Auto + 5)."""
+    voices = [{"name": "", "label": "Auto — smart voice (recommended)", "auto": True}]
+    voices += [
+        {"name": v["name"], "label": v["label"], "auto": False}
+        for v in CURATED_VOICES
+    ]
+    return {"voices": voices, "default": TTS_VOICE}
+
+
+@app.post("/api/refs")
+async def upload_ref(request: Request):
+    """Upload a character reference image. Returns a ref token used in jobs."""
     try:
-        voices = await edge_tts.list_voices()
-        groups = {}
-        for v in voices:
-            lang = v["Locale"].split("-")[0]
-            groups.setdefault(lang, []).append({
-                "name": v["ShortName"],
-                "label": v.get("FriendlyName", v["ShortName"]),
-                "gender": v.get("Gender", ""),
-                "locale": v["Locale"],
-            })
-        return {"groups": groups}
+        form = await request.form()
+        file: UploadFile = form.get("file")
+        if not file:
+            raise HTTPException(400, "No file provided")
+        data = await file.read()
+        if not data:
+            raise HTTPException(400, "Empty file")
+        if len(data) > 10 * 1024 * 1024:
+            raise HTTPException(400, "Image too large (max 10 MB)")
+
+        ext = Path(file.filename or "ref.png").suffix.lower() or ".png"
+        if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+            raise HTTPException(400, "Only PNG/JPG/WebP images are supported")
+
+        ref = uuid.uuid4().hex[:12]
+        path = os.path.join(REFS_DIR, f"{ref}{ext}")
+        with open(path, "wb") as f:
+            f.write(data)
+        return {"ref": f"{ref}{ext}"}
+    except HTTPException:
+        raise
     except Exception as e:
-        return {"groups": {}, "error": str(e)}
+        raise HTTPException(400, f"Upload failed: {e}")
+
+
+@app.get("/api/refs/{ref}")
+async def get_ref(ref: str):
+    safe = os.path.basename(ref)
+    path = os.path.join(REFS_DIR, safe)
+    if not os.path.exists(path):
+        raise HTTPException(404, "Ref not found")
+    media = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    return FileResponse(path, media_type=media)
 
 
 @app.get("/api/jobs")
@@ -77,10 +113,15 @@ async def create_job(request: Request):
     duration = max(2, min(6, duration))
     aspect_ratio = body.get("aspect_ratio", "16:9")
     voice = body.get("voice", "").strip()
+    ref_image = body.get("ref_image", "").strip()
+    voice_instructions = body.get("voice_instructions", "").strip()
+    smart_voiceover = bool(body.get("smart_voiceover", True))
 
     job = manager.create_job(
         mode=mode, prompt=prompt, story_text=story_text,
         voice=voice, duration=duration, aspect_ratio=aspect_ratio,
+        ref_image=ref_image, voice_instructions=voice_instructions,
+        smart_voiceover=smart_voiceover,
     )
     return job
 

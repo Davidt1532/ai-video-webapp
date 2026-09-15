@@ -42,6 +42,27 @@
         <label for="story-text">Your story</label>
         <textarea id="story-text" rows="8" placeholder="Scene 1: Title&#10;Narration for scene one...&#10;&#10;Scene 2: Title&#10;Narration for scene two..."></textarea>
         <div class="hint">Use "Scene N: Title" markers (or blank-line separators) — each scene gets its own clip + voiceover.</div>
+
+        <div class="ref-block">
+          <label for="ref-file">Character reference (optional)</label>
+          <div class="ref-drop" id="ref-drop" title="Upload your character image">
+            <input type="file" id="ref-file" accept="image/png,image/jpeg,image/webp" hidden />
+            <img id="ref-preview" class="hidden" alt="Character preview" />
+            <span id="ref-placeholder">🪄 Click to upload your character image</span>
+            <button id="ref-remove" class="btn-secondary ref-remove hidden" type="button">Remove</button>
+          </div>
+          <div class="hint">Used as the first frame for every scene on the free model. If the API rejects it, scenes generate automatically without it.</div>
+        </div>
+
+        <div class="field voice-instructions-field">
+          <label for="voice-instructions">Voiceover instructions (optional)</label>
+          <textarea id="voice-instructions" rows="2" placeholder="e.g. Narrate like a dramatic storyteller — warm, slow, building suspense..."></textarea>
+          <label class="check-row">
+            <input type="checkbox" id="smart-voice" checked />
+            <span>Smart professional voiceover</span>
+          </label>
+          <div class="hint">Smart voiceover rewrites the narration to follow your instructions and picks a matching voice automatically.</div>
+        </div>
       </div>
 
       <!-- Params -->
@@ -71,17 +92,35 @@
     </section>
 
     <!-- Progress -->
-    <section id="progress-card" class="card hidden">
-      <h2 id="progress-title">Generating…</h2>
-      <div class="status-line">
-        <span id="status-badge" class="badge">queued</span>
-        <span id="status-text">Waiting to start</span>
+    <section id="progress-card" class="card magic-card hidden">
+      <div class="magic-stage">
+        <div class="orb-wrap">
+          <div class="orb">
+            <div class="orb-ring"></div>
+            <div class="orb-core"></div>
+            <span class="spark s1"></span><span class="spark s2"></span>
+            <span class="spark s3"></span><span class="spark s4"></span>
+            <span class="spark s5"></span><span class="spark s6"></span>
+            <span class="spark s7"></span><span class="spark s8"></span>
+          </div>
+        </div>
+        <h2 class="magic-title">Casting your story into video…</h2>
+        <div class="status-line">
+          <span id="status-badge" class="badge">queued</span>
+          <span id="status-text">Waiting for the magic to begin</span>
+        </div>
+        <div class="progress-wrap">
+          <div id="progress-bar" class="progress-bar" style="width:0%"></div>
+        </div>
+        <ol class="stage-list">
+          <li id="stage-0" class="stage"><span class="stage-ico">✧</span>Reading the story</li>
+          <li id="stage-1" class="stage"><span class="stage-ico">✦</span>Casting scene magic</li>
+          <li id="stage-2" class="stage"><span class="stage-ico">✧</span>Weaving the voice</li>
+          <li id="stage-3" class="stage"><span class="stage-ico">✦</span>Binding the film</li>
+        </ol>
+        <ul id="scene-list" class="scene-list"></ul>
+        <div id="error-box" class="error hidden"></div>
       </div>
-      <div class="progress-wrap">
-        <div id="progress-bar" class="progress-bar" style="width:0%"></div>
-      </div>
-      <ul id="scene-list" class="scene-list"></ul>
-      <div id="error-box" class="error hidden"></div>
     </section>
 
     <!-- Result -->

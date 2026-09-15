@@ -12,11 +12,15 @@ def ensure_dirs():
     os.makedirs(CLIPS_DIR, exist_ok=True)
 
 
-def generate_video(prompt: str, scene_number: int, output_dir: str = None) -> str:
+def generate_video(prompt: str, scene_number: int, output_dir: str = None,
+                   image_url: str = None) -> str:
     """Generate a video clip from a prompt via NovAI API. Returns path to downloaded MP4.
 
     NovAI uses async jobs: submit a job, poll until status is 'succeeded'.
     cogvideox-flash is billed at $0/generation.
+
+    image_url (optional): a public URL used as the first frame. cogvideox-flash
+    may ignore it, so on rejection we retry as text-only rather than failing.
     """
     clips_dir = os.path.join(output_dir, "clips") if output_dir else CLIPS_DIR
     os.makedirs(clips_dir, exist_ok=True)
@@ -35,20 +39,28 @@ def generate_video(prompt: str, scene_number: int, output_dir: str = None) -> st
         "model": VIDEO_MODEL,
         "prompt": prompt,
     }
+    if image_url:
+        payload["image_url"] = [image_url]
+
+    def submit():
+        print(f"  [submit] Sending video generation request...")
+        if image_url:
+            print(f"  [submit]   first-frame image: {image_url[:80]}")
+        resp = requests.post(
+            f"{VIDEO_API_BASE_URL}/video/generations",
+            headers=headers,
+            json=payload,
+            timeout=60,
+        )
+        resp.raise_for_status()
+        return resp.json()
 
     # Submit job
     task_id = None
+    used_image = bool(image_url)
     for attempt in range(MAX_RETRIES):
         try:
-            print(f"  [submit] Sending video generation request (attempt {attempt + 1})...")
-            resp = requests.post(
-                f"{VIDEO_API_BASE_URL}/video/generations",
-                headers=headers,
-                json=payload,
-                timeout=60,
-            )
-            resp.raise_for_status()
-            data = resp.json()
+            data = submit()
             task_id = data.get("id") or data.get("task_id")
             if task_id:
                 print(f"  [submit] Task ID: {task_id}")
@@ -56,8 +68,15 @@ def generate_video(prompt: str, scene_number: int, output_dir: str = None) -> st
             else:
                 print(f"  [warn] No task ID in response: {data}")
         except requests.exceptions.HTTPError as e:
+            status_code = e.response.status_code if e.response is not None else 0
+            if used_image and status_code in (400, 422):
+                # Character image not supported by this model: retry text-only.
+                print(f"  [warn] API rejected image input ({status_code}); retrying text-only")
+                payload.pop("image_url", None)
+                used_image = False
+                continue
             print(f"  [error] Request failed: {e}")
-            if e.response is not None and e.response.status_code == 429:
+            if status_code == 429:
                 wait = 60 * (attempt + 1)
                 print(f"  [wait] Rate limited. Waiting {wait}s before retry...")
                 time.sleep(wait)
@@ -72,8 +91,13 @@ def generate_video(prompt: str, scene_number: int, output_dir: str = None) -> st
         print(f"  [error] Could not submit video job after {MAX_RETRIES} attempts")
         return ""
 
-    # Poll for completion
+    # Poll for completion (try /video/generations/{id}, fall back to /video/tasks/{id})
     start_time = time.time()
+    poll_paths = [
+        f"{VIDEO_API_BASE_URL}/video/generations/{task_id}",
+        f"{VIDEO_API_BASE_URL}/video/tasks/{task_id}",
+    ]
+    poll_index = 0
     while True:
         elapsed = time.time() - start_time
         if elapsed > MAX_POLL_TIME:
@@ -82,11 +106,16 @@ def generate_video(prompt: str, scene_number: int, output_dir: str = None) -> st
 
         try:
             resp = requests.get(
-                f"{VIDEO_API_BASE_URL}/video/generations/{task_id}",
+                poll_paths[poll_index],
                 headers=headers,
                 params={"model": VIDEO_MODEL},
                 timeout=60,
             )
+            if resp.status_code == 404 and poll_index == 0:
+                # Poll path might differ per provider version; try the alternate one.
+                print(f"  [warn] Poll endpoint 404, falling back to {poll_paths[1].split('/v1/')[-1]}")
+                poll_index = 1
+                continue
             resp.raise_for_status()
             data = resp.json()
         except requests.RequestException as e:
@@ -142,7 +171,7 @@ def download_video(url: str, output_path: str) -> str:
     return ""
 
 
-def generate_all_clips(scenes: list) -> dict[int, str]:
+def generate_all_clips(scenes: list, image_url: str = None) -> dict[int, str]:
     """Generate video clips for all scenes. Returns {scene_number: clip_path}."""
     clips = {}
     total = len(scenes)
@@ -153,7 +182,7 @@ def generate_all_clips(scenes: list) -> dict[int, str]:
         print(f"Prompt: {scene.video_prompt[:100]}...")
         print(f"{'='*50}")
 
-        clip_path = generate_video(scene.video_prompt, scene.number)
+        clip_path = generate_video(scene.video_prompt, scene.number, image_url=image_url)
         if clip_path:
             clips[scene.number] = clip_path
         else:

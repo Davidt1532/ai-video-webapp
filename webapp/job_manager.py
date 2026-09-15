@@ -10,10 +10,12 @@ sys_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if sys_path not in __import__("sys").path:
     __import__("sys").path.insert(0, sys_path)
 
-from scene_splitter import load_story_text
+from scene_splitter import load_story_text, Scene
 from video_generator import generate_video
 from voiceover_generator import generate_voiceover
 from video_combiner import build_final_video
+from narration_enhancer import enhance_narration, pick_voice
+from config import SMART_VOICEOVER, PUBLIC_BASE_URL
 
 DEFAULT_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
@@ -47,11 +49,15 @@ class JobManager:
                     voice TEXT,
                     duration INTEGER,
                     aspect_ratio TEXT,
+                    ref_image TEXT,
+                    voice_instructions TEXT,
+                    smart_voiceover INTEGER DEFAULT 1,
                     status TEXT DEFAULT 'queued',
                     scenes_total INTEGER DEFAULT 0,
                     scenes_done INTEGER DEFAULT 0,
                     current_scene TEXT,
                     scenes_detail TEXT DEFAULT '[]',
+                    used_voice TEXT,
                     error TEXT,
                     video_path TEXT,
                     cover_path TEXT,
@@ -60,6 +66,17 @@ class JobManager:
                 )
                 """
             )
+            # migration: add columns missing from older DBs
+            existing = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+            migrations = [
+                ("ref_image", "TEXT"),
+                ("voice_instructions", "TEXT"),
+                ("smart_voiceover", "INTEGER DEFAULT 1"),
+                ("used_voice", "TEXT"),
+            ]
+            for col, dtype in migrations:
+                if col not in existing:
+                    conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {dtype}")
 
     def _get_conn(self):
         conn = sqlite3.connect(self.db_path)
@@ -68,7 +85,9 @@ class JobManager:
 
     # ---------- Public API ----------
     def create_job(self, mode: str, prompt: str = "", story_text: str = "",
-                   voice: str = "", duration: int = 4, aspect_ratio: str = "16:9") -> dict:
+                   voice: str = "", duration: int = 4, aspect_ratio: str = "16:9",
+                   ref_image: str = "", voice_instructions: str = "",
+                   smart_voiceover: bool = True) -> dict:
         job_id = uuid.uuid4().hex[:12]
         now = datetime.now(timezone.utc).isoformat()
         job_dir = os.path.join(self.jobs_dir, job_id)
@@ -78,9 +97,11 @@ class JobManager:
             conn.execute(
                 """INSERT INTO jobs
                    (id, mode, prompt, story_text, voice, duration, aspect_ratio,
+                    ref_image, voice_instructions, smart_voiceover,
                     status, created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (job_id, mode, prompt, story_text, voice, duration, aspect_ratio,
+                 ref_image, voice_instructions, int(smart_voiceover),
                  "queued", now, now),
             )
 
@@ -200,6 +221,18 @@ class JobManager:
             clips = {}
             voiceovers = {}
             video_path = None
+            do_smart = bool(SMART_VOICEOVER and job.get("smart_voiceover", True))
+            voice_instructions = job.get("voice_instructions", "") or ""
+            chosen_voice = job.get("voice", "") or ""
+            base_voice = chosen_voice  # user's explicit choice (or "")
+            if not base_voice:
+                base_voice = ""  # means "auto" / use LLM-picked
+
+            # Build public image URL for first-frame (best-effort on free model)
+            ref = job.get("ref_image", "")
+            image_url = None
+            if ref and PUBLIC_BASE_URL:
+                image_url = f"{PUBLIC_BASE_URL.rstrip('/')}/api/refs/{ref}"
 
             for i, scene in enumerate(scenes):
                 scenes_detail = [
@@ -208,18 +241,39 @@ class JobManager:
                                else ("processing" if s.number == scene.number else "pending")}
                     for s in scenes
                 ]
+
+                # --- Smart narration rewrite + auto voice pick -----------------
+                narration_text = scene.narration
+                scene_voice = base_voice or ""  # empty means default
+                if do_smart:
+                    narration_text = enhance_narration(
+                        scene.narration, voice_instructions, scene.title
+                    )
+                    if not base_voice:
+                        # pick best voice from curated set
+                        picked = pick_voice(narration_text, voice_instructions, scene.title)
+                        if picked:
+                            scene_voice = picked
+
+                scene_obj = Scene(scene.number, scene.title, narration_text,
+                                  scene.video_prompt)
+
                 self._update(job_id, scenes_total=total, scenes_done=max(0, i),
                              current_scene=f"Scene {scene.number}: {scene.title}",
                              scenes_detail=scenes_detail, updated=True)
 
-                clip = generate_video(scene.video_prompt, scene.number, output_dir=job_dir)
+                clip = generate_video(scene_obj.video_prompt, scene.number, output_dir=job_dir, image_url=image_url)
                 if clip:
                     clips[scene.number] = clip
-                audio, dur = generate_voiceover(scene.number, scene.narration, output_dir=job_dir, voice=job["voice"] or None)
+
+                audio, dur = generate_voiceover(
+                    scene.number, scene_obj.narration, output_dir=job_dir,
+                    voice=scene_voice or None,
+                )
                 if audio:
                     voiceovers[scene.number] = (audio, dur)
 
-                self._update(job_id, scenes_done=i + 1, updated=True)
+                self._update(job_id, scenes_done=i + 1, used_voice=scene_voice or None, updated=True)
 
             if not clips:
                 raise RuntimeError("No video clips were generated. Rate-limited or API error.")
@@ -233,7 +287,8 @@ class JobManager:
             ]
             self._update(job_id, scenes_total=total, scenes_done=total,
                          current_scene="Done", scenes_detail=scenes_detail,
-                         video_path=video_path, status="completed", updated=True)
+                         video_path=video_path, used_voice=chosen_voice or None,
+                         status="completed", updated=True)
 
     def _set_error(self, job_id: str, error: str):
         self._update(job_id, status="failed", error=error, updated=True)

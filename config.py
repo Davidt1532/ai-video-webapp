@@ -6,15 +6,34 @@ import os
 VIDEO_API_KEY = os.getenv("VIDEO_API_KEY", "")
 VIDEO_API_BASE_URL = "https://aiapi-pro.com/v1"
 
+# Public base URL of this app - used to build absolute URLs for uploaded
+# reference images so the video API can fetch them from the internet.
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "")
+
 # Video generation settings
 VIDEO_MODEL = "cogvideox-flash"  # $0/generation on NovAI
 VIDEO_DURATION = 4  # seconds per clip (max 6)
 ASPECT_RATIO = "16:9"
 
 # TTS voice settings (edge-tts)
-TTS_VOICE = "en-US-GuyNeural"  # Options: en-US-GuyNeural, en-US-AvaNeural, en-GB-RyanNeural, en-IN-PrabhatNeural
+# Curated "human tune" neural voices exposed to users.
+# Auto = smart voice picked per-scene by the narration engine.
+CURATED_VOICES = [
+    {"name": "en-US-ChristopherNeural", "label": "Christopher — Deep & dramatic"},
+    {"name": "en-US-MichelleNeural", "label": "Michelle — Bright & lively"},
+    {"name": "en-GB-RyanNeural", "label": "Ryan — British gentleman"},
+    {"name": "en-GB-SoniaNeural", "label": "Sonia — Warm & storytelling"},
+    {"name": "en-IN-PrabhatNeural", "label": "Prabhat — Calm & clear"},
+]
+TTS_VOICE = "en-US-ChristopherNeural"  # default used when Auto selection fails
 TTS_RATE = "+0%"
 TTS_VOLUME = "+0%"
+
+# Smart narration settings (free GLM model on NovAI)
+SMART_VOICEOVER = True
+NARRATION_MODEL = "glm-4.6v-flash"
+NARRATION_TIMEOUT = 20  # seconds per LLM call
+NARRATION_MAX_TEXT = 600  # narration is capped so it fits inside a short clip
 
 # Output settings
 OUTPUT_DIR = "output"
